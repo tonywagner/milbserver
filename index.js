@@ -13,10 +13,17 @@ var crypto = require('crypto')
 // Declare our session class for API activity, from the included session.js file
 const sessionClass = require('./session.js')
 
-// Valid resolutions, default is adaptive
-// note that 720p_alt is 60 fps, all others are 30 fps
-const VALID_RESOLUTIONS = [ 'adaptive', '720p_alt', '540p', '360p', '216p' ]
-const VALID_LEVELS = [ 11, 12, 13, 14, 15, 5442, 16 ]
+// Define some valid variable values, the first one being the default
+const VALID_DATES = [ 'today', 'yesterday' ]
+const VALID_LINK_TYPES = [ 'Embed', 'Stream', 'Chromecast', 'Advanced' ]
+const VALID_START_FROM = [ 'Beginning', 'Live' ]
+const VALID_SCORES = [ 'Hide', 'Show' ]
+const VALID_RESOLUTIONS = [ 'adaptive', '720p60', '540p', '360p', '216p' ]
+// Corresponding andwidths to display for above resolutions
+const VALID_BANDWIDTHS = [ '', '5165k', '3219k', '1496k', '654k' ]
+const VALID_FORCE_VOD = [ 'off', 'on' ]
+const LEVELS = { 'AAA': '11', 'AA': '12', 'A+': '13', 'A-': '14', 'All': '11,12,13,14' }
+const AFFILIATES = { 'Angels': '559,561,401,460', 'Astros': '482,3712,573,5434', 'Athletics': '237,400,524,499', 'Blue Jays': '422,463,424,435', 'Braves': '430,431,432,478', 'Brewers': '556,5015,249,572', 'Cardinals': '235,279,443,440', 'Cubs': '553,451,521,550', 'D-backs': '2310,419,516,5368', 'Dodgers': '238,260,526,456', 'Giants': '3410,105,461,476', 'Indians': '402,445,437,481', 'Mariners': '574,403,515,529', 'Marlins': '4124,564,554,479', 'Mets': '552,505,453,507', 'Nationals': '534,547,426,436', 'Orioles': '418,568,548,488', 'Padres': '510,4904,103,584', 'Phillies': '1410,427,522,566', 'Pirates': '452,484,3390,477', 'Rangers': '102,540,448,485', 'Rays': '234,421,233,2498', 'Reds': '416,498,450,459', 'Red Sox': '533,546,414,428', 'Rockies': '538,259,342,486', 'Royals': '541,3705,1350,565', 'Tigers': '106,512,570,582', 'Twins': '3898,1960,492,509', 'White Sox': '247,580,487,494', 'Yankees': '531,1956,537,587' }
 
 // Process command line arguments, if specified:
 // --port or -p (default 9999)
@@ -101,7 +108,7 @@ app.get('/stream.m3u8', async function(req, res) {
       } else {
         options.resolution = session.returnValidItem(req.query.resolution, VALID_RESOLUTIONS)
       }
-      options.force_vod = req.query.force_vod || 'off'
+      options.force_vod = req.query.force_vod || VALID_FORCE_VOD[0]
 
       if ( req.query.src ) {
         streamURL = req.query.src
@@ -123,9 +130,6 @@ app.get('/stream.m3u8', async function(req, res) {
 
     if (streamURL) {
       session.debuglog('using streamURL : ' + streamURL)
-      if ( streamURL.indexOf('master_radio_') > 0 ) {
-        options.resolution = 'adaptive'
-      }
       getMasterPlaylist(streamURL, req, res, options)
     } else {
       session.log('failed to get streamURL : ' + req.url)
@@ -196,13 +200,13 @@ function getMasterPlaylist(streamURL, req, res, options = {}) {
       var body = response.body.trim().split('\n')
 
       let resolution = options.resolution || VALID_RESOLUTIONS[0]
-      let force_vod = options.force_vod || 'off'
+      let force_vod = options.force_vod || VALID_FORCE_VOD[0]
 
       // Some variables for controlling audio/video stream selection, if specified
       var video_track_matched = false
       var frame_rate = '29.97'
       if ( resolution !== 'adaptive' ) {
-        if ( resolution.slice(4) === '_alt' ) {
+        if ( resolution.slice(4) === '60' ) {
           frame_rate = '59.94'
         }
         resolution = resolution.slice(0, 3)
@@ -243,7 +247,7 @@ function getMasterPlaylist(streamURL, req, res, options = {}) {
         if ( (resolution === 'adaptive') || (video_track_matched) ) {
           video_track_matched = false
           newurl = encodeURIComponent(url.resolve(streamURL, line.trim()))
-          if ( force_vod == 'on' ) newurl += '&force_vod=on'
+          if ( force_vod != VALID_FORCE_VOD[0] ) newurl += '&force_vod=on'
           return 'playlist?url='+newurl
         }
       })
@@ -272,7 +276,7 @@ app.get('/playlist', function(req, res) {
   delete req.headers.host
 
   var u = req.query.url
-  var force_vod = req.query.force_vod || 'off'
+  var force_vod = req.query.force_vod || VALID_FORCE_VOD[0]
   session.debuglog('playlist url : ' + u)
 
   var req = function () {
@@ -357,83 +361,106 @@ app.get('/', async function(req, res) {
 
     let gameDate = session.liveDate(15)
     if ( req.query.date ) {
-      if ( req.query.date == 'today' ) {
-        gameDate = session.liveDate()
-      } else if ( req.query.date == 'yesterday' ) {
+      if ( req.query.date == VALID_DATES[1] ) {
         gameDate = session.yesterdayDate()
-      } else {
+      } else if ( req.query.date != VALID_DATES[0] ) {
         gameDate = req.query.date
       }
     }
-    var level = VALID_LEVELS[0]
+    var level = 'AAA'
     if ( req.query.level ) {
-      level = req.query.level
+      level = decodeURIComponent(req.query.level)
     }
-    var cache_data = await session.getDayData(gameDate, level)
+    var team = 'All'
+    var team_ids = ''
+    if ( req.query.team ) {
+      team = decodeURIComponent(req.query.team)
+      if ( typeof AFFILIATES[team] === 'undefined' ) {
+        team = 'All'
+      } else {
+        team_ids = AFFILIATES[team]
+        level = 'All'
+      }
+    }
+    if ( typeof LEVELS[level] === 'undefined' ) {
+      level = 'AAA'
+    }
+    var level_ids  = LEVELS[level]
+    var cache_data = await session.getDayData(gameDate, level_ids, team_ids)
 
-    var linkType = 'Embed'
+    var linkType = VALID_LINK_TYPES[0]
     if ( req.query.linkType ) {
       linkType = req.query.linkType
       session.setLinkType(linkType)
     }
-    var startFrom = 'Beginning'
+    var startFrom = VALID_START_FROM[0]
     if ( req.query.startFrom ) {
       startFrom = req.query.startFrom
     }
-    var scores = 'Hide'
+    var scores = VALID_SCORES[0]
     if ( req.query.scores ) {
       scores = req.query.scores
     }
-    var resolution = 'adaptive'
+    var resolution = VALID_RESOLUTIONS[0]
     if ( req.query.resolution ) {
       resolution = req.query.resolution
     }
-    var force_vod = 'off'
+    var force_vod = VALID_FORCE_VOD[0]
     if ( req.query.force_vod ) {
       force_vod = req.query.force_vod
     }
 
-    var body = '<html><head><meta charset="UTF-8"><meta http-equiv="Content-type" content="text/html;charset=UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,shrink-to-fit=no"><title>' + appname + '</title><link rel="icon" href="favicon.svg"><style type="text/css">input[type=text],input[type=button]{-webkit-appearance:none;-webkit-border-radius:0}body{width:480px;color:lightgray;background-color:black;font-family:Arial,Helvetica,sans-serif}a{color:darkgray}button{color:lightgray;background-color:black}button.default{color:black;background-color:lightgray}table{width:100%;pad}table,th,td{border:1px solid darkgray;border-collapse:collapse}th,td{padding:5px}.tinytext{font-size:.8em}</style><script type="text/javascript">var date="' + gameDate + '";var level="' + level + '";var resolution="' + resolution + '";var force_vod="' + force_vod + '";var linkType="' + linkType + '";var startFrom="' + startFrom + '";var scores="' + scores + '";function reload(){window.location="/?date="+date+"&level="+level+"&resolution="+resolution+"&force_vod="+force_vod+"&linkType="+linkType+"&startFrom="+startFrom+"&scores="+scores}</script></head><body><h1>' + appname + '</h1>' + "\n"
+    var body = '<html><head><meta charset="UTF-8"><meta http-equiv="Content-type" content="text/html;charset=UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,shrink-to-fit=no"><title>' + appname + '</title><link rel="icon" href="favicon.svg"><style type="text/css">input[type=text],input[type=button]{-webkit-appearance:none;-webkit-border-radius:0}body{width:480px;color:lightgray;background-color:black;font-family:Arial,Helvetica,sans-serif}a{color:darkgray}button{color:lightgray;background-color:black}button.default{color:black;background-color:lightgray}table{width:100%;pad}table,th,td{border:1px solid darkgray;border-collapse:collapse}th,td{padding:5px}.tinytext{font-size:.8em}</style><script type="text/javascript">var date="' + gameDate + '";var level="' + level + '";var team="' + team + '";var resolution="' + resolution + '";var force_vod="' + force_vod + '";var linkType="' + linkType + '";var startFrom="' + startFrom + '";var scores="' + scores + '";function reload(){var newurl="/?";if ((date != "' + VALID_DATES[0] + '") && (date != "' + session.liveDate(15) + '")){newurl+="date="+date+"&"}if (level != "AAA"){newurl+="level="+encodeURIComponent(level)+"&"}if (team != "All"){newurl+="team="+encodeURIComponent(team)+"&"}if (resolution != "' + VALID_RESOLUTIONS[0] + '"){newurl+="resolution="+resolution+"&"}if (linkType=="Stream"){if (force_vod != "' + VALID_FORCE_VOD[0] + '"){newurl+="force_vod="+force_vod+"&"}}if (linkType != "' + VALID_LINK_TYPES[0] + '"){newurl+="linkType="+linkType+"&"}if (linkType=="Embed"){if (startFrom != "' + VALID_START_FROM[0] + '"){newurl+="startFrom="+startFrom+"&"}}if (scores != "' + VALID_SCORES[0] + '"){newurl+="scores="+scores+"&"}window.location=newurl.substring(0,newurl.length-1)}</script></head><body><h1>' + appname + '</h1>' + "\n"
 
-    body += '<p>Date: <input type="date" id="gameDate" value="' + gameDate + '"/> <button onclick="date=\'today\';reload()">Today</button> <button onclick="date=\'yesterday\';reload()">Yesterday</button></p>' + "\n"
-
-    body += '<p class="tinytext">Updated ' + session.cache.dates[session.convertDateStringToObjectName(gameDate)+'.'+level].updated + '</p>' + "\n"
+    body += '<p>Date: <input type="date" id="gameDate" value="' + gameDate + '"/> '
+    for (var i = 0; i < VALID_DATES.length; i++) {
+      body += '<button onclick="date=\'' + VALID_DATES[i] + '\';reload()">' + VALID_DATES[i] + '</button> '
+    }
+    let cache_label = session.convertDateStringToObjectName(gameDate)
+    cache_label += '.' + level_ids
+    if ( team != 'All') cache_label += '.' + team_ids
+    body += '</p>' + "\n" + '<p class="tinytext">Updated ' + session.cache.dates[cache_label].updated + '</p>' + "\n"
 
     body += '<p>Level: '
-    options = [ 'AAA', 'AA', 'A+', 'A-' ]
-    for (var i = 0; i < options.length; i++) {
+    for (const [key, value] of Object.entries(LEVELS)) {
       body += '<button '
-      if ( level == VALID_LEVELS[i] ) body += 'class="default" '
-      body += 'onclick="level=\'' + VALID_LEVELS[i] + '\';reload()">' + options[i] + '</button> '
+      if ( level == key ) body += 'class="default" '
+      body += 'onclick="team=\'All\';level=\'' + key + '\';reload()">' + key + '</button> '
     }
-    body += '</p>' + "\n"
+
+    body += ' or Team: '
+    body += '<select id="team" onchange="level=\'All\';team=this.value;reload()">'
+    body += '<option value="All">All</option>'
+    for (const [key, value] of Object.entries(AFFILIATES)) {
+      body += '<option value="' + key + '"'
+      if ( team == key ) body += ' selected'
+      body += '>' + key + '</option> '
+    }
+    body += '</select></p>' + "\n"
 
     body += '<p>Link Type: '
-    options = ['Embed', 'Stream', 'Chromecast', 'Advanced']
-    for (var i = 0; i < options.length; i++) {
+    for (var i = 0; i < VALID_LINK_TYPES.length; i++) {
       body += '<button '
-      if ( linkType == options[i] ) body += 'class="default" '
-      body += 'onclick="linkType=\'' + options[i] + '\';reload()">' + options[i] + '</button> '
+      if ( linkType == VALID_LINK_TYPES[i] ) body += 'class="default" '
+      body += 'onclick="linkType=\'' + VALID_LINK_TYPES[i] + '\';reload()">' + VALID_LINK_TYPES[i] + '</button> '
     }
     body += '</p>' + "\n"
 
     if ( linkType == 'Embed' ) {
       body += '<p>Start From: '
-      options = ['Beginning', 'Live']
-      for (var i = 0; i < options.length; i++) {
+      for (var i = 0; i < VALID_START_FROM.length; i++) {
         body += '<button '
-        if ( startFrom == options[i] ) body += 'class="default" '
-        body += 'onclick="startFrom=\'' + options[i] + '\';reload()">' + options[i] + '</button> '
+        if ( startFrom == VALID_START_FROM[i] ) body += 'class="default" '
+        body += 'onclick="startFrom=\'' + VALID_START_FROM[i] + '\';reload()">' + VALID_START_FROM[i] + '</button> '
       }
       body += '</p>' + "\n"
     }
 
     body += '<p>Scores: '
-    options = ['Hide', 'Show']
-    for (var i = 0; i < options.length; i++) {
+    for (var i = 0; i < VALID_SCORES.length; i++) {
       body += '<button '
-      if ( scores == options[i] ) body += 'class="default" '
-      body += 'onclick="scores=\'' + options[i] + '\';reload()">' + options[i] + '</button> '
+      if ( scores == VALID_SCORES[i] ) body += 'class="default" '
+      body += 'onclick="scores=\'' + VALID_SCORES[i] + '\';reload()">' + VALID_SCORES[i] + '</button> '
     }
     body += '</p>' + "\n"
 
@@ -447,19 +474,26 @@ app.get('/', async function(req, res) {
     if ( linkType == 'stream' ) {
       link = linkType + '.m3u8'
     } else {
-      force_vod = 'off'
+      force_vod = VALID_FORCE_VOD[0]
     }
 
     for (var j = 0; j < cache_data.dates[0].games.length; j++) {
       let level = cache_data.dates[0].games[j].teams['home'].team.league.name
+      let long_orgs = [ 'Jays', 'Sox' ]
       let awayparent = cache_data.dates[0].games[j].teams['away'].team.parentOrgName
       awayparent = awayparent.split(' ')
-      awayparent = awayparent[awayparent.length-1]
-      let awayteam = cache_data.dates[0].games[j].teams['away'].team.shortName + ' (' + awayparent + ')'
+      awayparent_name = awayparent[awayparent.length-1]
+      if ( long_orgs.includes(awayparent_name) ) {
+        awayparent_name = awayparent[awayparent.length-2] + ' ' + awayparent[awayparent.length-1]
+      }
+      let awayteam = cache_data.dates[0].games[j].teams['away'].team.shortName + ' (' + awayparent_name + ')'
       let homeparent = cache_data.dates[0].games[j].teams['home'].team.parentOrgName
       homeparent = homeparent.split(' ')
-      homeparent = homeparent[homeparent.length-1]
-      let hometeam = cache_data.dates[0].games[j].teams['home'].team.shortName + ' (' + homeparent + ')'
+      homeparent_name = homeparent[homeparent.length-1]
+      if ( long_orgs.includes(homeparent_name) ) {
+        homeparent_name = homeparent[homeparent.length-2] + ' ' + homeparent[homeparent.length-1]
+      }
+      let hometeam = cache_data.dates[0].games[j].teams['home'].team.shortName + ' (' + homeparent_name + ')'
 
       let teams = level + ":<br/>" + awayteam + " @ " + hometeam
       let pitchers = ""
@@ -515,7 +549,18 @@ app.get('/', async function(req, res) {
       body += "<tr><td>" + teams + pitchers + state + "</td>"
 
       if ( ((typeof cache_data.dates[0].games[j].content.media) == 'undefined') || ((typeof cache_data.dates[0].games[j].content.media.epg) == 'undefined') ) {
-        body += "<td></td>"
+        body += "<td>"
+        let message = 'N/A'
+        if ( typeof cache_data.dates[0].games[j].broadcasts !== 'undefined' ) {
+          for (var k = 0; k < cache_data.dates[0].games[j].broadcasts.length; k++) {
+            if ( cache_data.dates[0].games[j].broadcasts[k].name == 'MiLB.TV' ) {
+              message = mediaType
+              break
+            }
+          }
+        }
+        body += message
+        body += "</td>"
       } else {
         body += "<td>"
         for (var k = 0; k < cache_data.dates[0].games[j].content.media.epg.length; k++) {
@@ -540,20 +585,23 @@ app.get('/', async function(req, res) {
                     let querystring
                     querystring = '?gamePk=' + gamePk
                     if ( mediaType == 'MiLBTV' ) {
-                      querystring += '&resolution=' + resolution
+                      if ( resolution != VALID_RESOLUTIONS[0] ) querystring += '&resolution=' + resolution
                     }
                     if ( linkType == 'embed' ) {
                       if ( cache_data.dates[0].games[j].content.media.epg[k].items[x].mediaState == 'MEDIA_ON' ) {
                         querystring += '&isLive=true'
                       }
-                      querystring += '&startFrom=' + startFrom
+                      if ( startFrom != VALID_START_FROM[0] ) querystring += '&startFrom=' + startFrom
                     }
-                    if ( cache_data.dates[0].games[j].content.media.epg[k].items[x].mediaState == 'MEDIA_ON' ) {
-                      querystring += '&force_vod=' + force_vod
+                    if ( linkType == 'stream' ) {
+                      if ( cache_data.dates[0].games[j].content.media.epg[k].items[x].mediaState == 'MEDIA_ON' ) {
+                        if ( force_vod != VALID_FORCE_VOD[0] ) querystring += '&force_vod=' + force_vod
+                      }
                     }
-                    body += '<a href="' + thislink + querystring + '">' + station + '</a>' + ', '
+                    body += '<a href="' + thislink + querystring + '">' + station + '</a>'
                   } else {
-                    body += station + ', '
+                    body += station
+                    break
                   }
                 }
               }
@@ -561,46 +609,30 @@ app.get('/', async function(req, res) {
             break
           }
         }
-        if ( mediaType == 'MiLBTV' ) {
-          if ( (cache_data.dates[0].games[j].content.media.epgAlternate[0].title == 'Extended Highlights') && cache_data.dates[0].games[j].content.media.epgAlternate[0].items[0] ) {
-            body += '<a href="/' + link + '?src=' + encodeURIComponent(cache_data.dates[0].games[j].content.media.epgAlternate[0].items[0].playbacks[3].url) + '&resolution=' + resolution + '">CG</a>, '
-          }
-          if ( (cache_data.dates[0].games[j].content.media.epgAlternate[1].title == 'Daily Recap') && cache_data.dates[0].games[j].content.media.epgAlternate[1].items[0] ) {
-            body += '<a href="/' + link + '?src=' + encodeURIComponent(cache_data.dates[0].games[j].content.media.epgAlternate[1].items[0].playbacks[3].url) + '&resolution=' + resolution + '">Recap</a>, '
-          }
-        }
-        if ( body.substr(-2) == ', ' ) {
-          body = body.slice(0, -2)
-        }
         body += "</td>"
         body += "</tr>" + "\n"
       }
     }
     body += "</table></p>" + "\n"
 
-    // Rename parameter back before displaying further links
-    if ( mediaType == 'MiLBTV' ) {
-      mediaType = 'Video'
+    body += '<p>Resolution: '
+    for (var i = 0; i < VALID_RESOLUTIONS.length; i++) {
+      body += '<button '
+      if ( resolution == VALID_RESOLUTIONS[i] ) body += 'class="default" '
+      body += 'onclick="resolution=\'' + VALID_RESOLUTIONS[i] + '\';reload()">' + VALID_RESOLUTIONS[i]
+      if ( VALID_BANDWIDTHS[i] != '' ) {
+        body += '<br/><span class="tinytext">' + VALID_BANDWIDTHS[i] + '</span>'
+      }
+      body += '</button> '
     }
-
-    if ( mediaType == 'Video' ) {
-        body += '<p>Resolution: '
-        let options = VALID_RESOLUTIONS
-        for (var i = 0; i < options.length; i++) {
-          body += '<button '
-          if ( resolution == options[i] ) body += 'class="default" '
-          body += 'onclick="resolution=\'' + options[i] + '\';reload()">' + options[i] + '</button> '
-        }
-        body += '</p>' + "\n"
-    }
+    body += '</p>' + "\n"
 
     if ( linkType == 'stream' ) {
       body += '<p>Force VOD: '
-      options = ['off', 'on']
-      for (var i = 0; i < options.length; i++) {
+      for (var i = 0; i < VALID_FORCE_VOD.length; i++) {
         body += '<button '
-        if ( force_vod == options[i] ) body += 'class="default" '
-        body += 'onclick="force_vod=\'' + options[i] + '\';reload()">' + options[i] + '</button> '
+        if ( force_vod == VALID_FORCE_VOD[i] ) body += 'class="default" '
+        body += 'onclick="force_vod=\'' + VALID_FORCE_VOD[i] + '\';reload()">' + VALID_FORCE_VOD[i] + '</button> '
       }
       body += '<span class="tinytext">(only if client does not support seeking in live streams)</span></p>' + "\n"
     }

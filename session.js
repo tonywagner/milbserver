@@ -475,17 +475,21 @@ class sessionClass {
   }
 
   // get data for a day, either from cache or an API call
-  async getDayData(dateString, level) {
+  async getDayData(dateString, level_ids, team_ids) {
     try {
       this.debuglog('getDayData for ' + dateString)
 
       let cache_data
-      let cache_name = this.convertDateStringToObjectName(dateString) + '.' + level
-      let cache_file = path.join(CACHE_DIRECTORY, dateString+'.'+level+'.json')
+      let cache_name = this.convertDateStringToObjectName(dateString)
+      cache_name += '.' + level_ids
+      if ( team_ids != '' ) cache_name += '.' + team_ids
+      let cache_file = path.join(CACHE_DIRECTORY, cache_name+'.json')
       let currentDate = new Date()
       if ( !fs.existsSync(cache_file) || !this.cache || !this.cache.dates || !this.cache.dates[cache_name] || !this.cache.dates[cache_name].dateCacheExpiry || (currentDate > new Date(this.cache.dates[cache_name].dateCacheExpiry)) ) {
+        let url = 'https://bdfed.stitch.mlbinfra.com/bdfed/transform-mlb-scoreboard?stitch_env=prod&sortTemplate=2&sportId=' + level_ids + '&startDate=' + dateString + '&endDate=' + dateString + '&gameType=E&&gameType=S&&gameType=R&&gameType=F&&gameType=D&&gameType=L&&gameType=W&&gameType=A&language=en'
+        if ( team_ids != '' ) url += '&teamIds=' + team_ids
         let reqObj = {
-          url: 'https://bdfed.stitch.mlbinfra.com/bdfed/transform-mlb-scoreboard?stitch_env=prod&sortTemplate=2&sportId=' + level + '&startDate=' + dateString + '&endDate=' + dateString + '&gameType=E&&gameType=S&&gameType=R&&gameType=F&&gameType=D&&gameType=L&&gameType=W&&gameType=A&language=en',
+          url: url,
           headers: {
             'User-agent': USER_AGENT,
             'Origin': 'https://www.milb.com',
@@ -499,7 +503,7 @@ class sessionClass {
         if ( this.isValidJson(response) ) {
           //this.debuglog(response)
           cache_data = JSON.parse(response)
-          this.save_cache_file(dateString+'.'+level, cache_data)
+          this.save_cache_file(cache_name, cache_data)
 
           // Default cache period is 1 hour
           let oneHourFromNow = new Date()

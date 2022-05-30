@@ -1,6 +1,6 @@
 # milbserver
 
-Current version 2021.7.15
+Current version 2022.5.30
 
 Credit to https://github.com/tonycpsu/streamglob and https://github.com/mafintosh/hls-decryptor
 

@@ -329,13 +329,13 @@ function getMasterPlaylist(streamURL, req, res, options = {}) {
           return 'ts?url='+encodeURIComponent(url.resolve(streamURL, line.trim())) + content_protect + referer_parameter
         }
 
-        // Omit subtitles (not provided)
-        if ( line.startsWith('#EXT-X-MEDIA:TYPE=SUBTITLES') ) {
+        // Omit subtitles
+        /*if ( line.startsWith('#EXT-X-MEDIA:TYPE=SUBTITLES') ) {
           return
         }
         if (line.indexOf(',SUBTITLES="subs"') > 0) {
           line = line.replace(',SUBTITLES="subs"', '')
-        }
+        }*/
 
         // Omit keyframe tracks
         if (line.indexOf('#EXT-X-I-FRAME-STREAM-INF:') === 0) {
@@ -359,6 +359,25 @@ function getMasterPlaylist(streamURL, req, res, options = {}) {
         // Skip key in archive master playlists
         if (line.indexOf('#EXT-X-SESSION-KEY:METHOD=AES-128') === 0) {
           return
+        }
+
+        // Handle subtitle tracks
+        if ( line.startsWith('#EXT-X-MEDIA:TYPE=SUBTITLES') ) {
+          if ( line.match ) {
+            //var parsed = line.match(/URI="([^"]+)"?$/)
+            var parsed = line.match(',URI="([^"]+)"')
+            if ( parsed[1] ) {
+              newurl = 'playlist?url='+encodeURIComponent(url.resolve(streamURL, parsed[1].trim()))
+              if ( inning_half != VALID_INNING_HALF[0] ) newurl += '&inning_half=' + inning_half
+              if ( inning_number != VALID_INNING_NUMBER[0] ) newurl += '&inning_number=' + inning_number
+              if ( skip != VALID_SKIP[0] ) newurl += '&skip=' + skip
+              if ( pad != VALID_PAD[0] ) newurl += '&pad=' + pad
+              if ( gamePk ) newurl += '&gamePk=' + gamePk
+              if ( force_vod != VALID_FORCE_VOD[0] ) newurl += '&force_vod=on'
+              newurl += content_protect + referer_parameter
+              return line.replace(parsed[1],newurl)
+            }
+          }
         }
 
         if (line[0] === '#') {
@@ -419,6 +438,11 @@ app.get('/playlist', function(req, res) {
   var skip = req.query.skip || VALID_SKIP[0]
   var pad = req.query.pad || VALID_PAD[0]
   var gamePk = req.query.gamePk || false
+
+  var extension = 'ts'
+  if (u.endsWith('_webVTT.m3u8') > 0) {
+    extension = 'vtt'
+  }
 
   var req = function () {
     var headers = {}
@@ -519,8 +543,8 @@ app.get('/playlist', function(req, res) {
 
         if (line[0] === '#') return line
 
-        if ( key ) return 'ts?url='+encodeURIComponent(url.resolve(u, line.trim()))+'&key='+encodeURIComponent(key)+'&iv='+encodeURIComponent(iv) + content_protect + referer_parameter
-        else return 'ts?url='+encodeURIComponent(url.resolve(u, line.trim())) + content_protect + referer_parameter
+        if ( key ) return extension + '?url='+encodeURIComponent(url.resolve(u, line.trim()))+'&key='+encodeURIComponent(key)+'&iv='+encodeURIComponent(iv) + content_protect + referer_parameter
+        else return extension + '?url='+encodeURIComponent(url.resolve(u, line.trim())) + content_protect + referer_parameter
       })
       .filter(function(line) {
         return line
@@ -533,12 +557,12 @@ app.get('/playlist', function(req, res) {
         if ( body_array[last_segment_index] == '#EXT-X-ENDLIST' ) {
           session.debuglog('padding archive stream with extra segments')
           last_segment_index--
-          while ( !body_array[last_segment_index].startsWith('#EXTINF:4') ) {
+          while ( !body_array[last_segment_index].startsWith('#EXTINF:' + SECONDS_PER_SEGMENT) ) {
             last_segment_index--
           }
           last_segment_inf = body_array[last_segment_index]
-          last_segment_ts = body_array[last_segment_index+1]
-          let pad_lines = '#EXT-X-DISCONTINUITY' + '\n' + last_segment_inf + '\n' + last_segment_ts + '\n'
+          last_segment = body_array[last_segment_index+1]
+          let pad_lines = '#EXT-X-DISCONTINUITY' + '\n' + last_segment_inf + '\n' + last_segment + '\n'
           session.debuglog(pad_lines)
           for (i=0; i<pad; i++) {
             body += pad_lines
@@ -609,6 +633,48 @@ app.get('/ts', async function(req, res) {
         respond(response, res, buffer)
       })
     }
+  })
+})
+
+// Listen for vtt (subtitle) requests
+app.get('/vtt', function(req, res) {
+  session.debuglog('vtt request : ' + req.url)
+
+  delete req.headers.host
+
+  var u = req.query.url
+  session.debuglog('vtt url : ' + u)
+
+  var referer = false
+  var referer_parameter = ''
+  if ( req.query.referer ) {
+    referer = decodeURIComponent(req.query.referer)
+    session.debuglog('found vtt referer : ' + referer)
+    referer_parameter = '&referer=' + encodeURIComponent(req.query.referer)
+  }
+
+  var req = function () {
+    var headers = {}
+    if ( referer ) {
+      headers.referer = referer
+      headers.origin = getOriginFromURL(referer)
+    }
+    requestRetry(u, headers, function(err, response) {
+      if (err) return res.error(err)
+
+      //session.debuglog(response.body)
+
+      var body = response.body
+      session.debuglog(body)
+      respond(response, res, Buffer.from(body))
+    })
+  }
+
+  return req()
+
+  requestRetry(u, {}, function(err, res) {
+    if (err) return res.error(err)
+    req()
   })
 })
 
@@ -825,7 +891,7 @@ app.get('/', async function(req, res) {
       body += 'or '
     }
 
-    body += '<span class="tooltip">Inning<span class="tooltiptext">For video streams only: choose the inning to start with (and the score to display, if applicable). Inning number is relative -- for example, selecting inning 7 here will show inning 7 for scheduled 9 inning games, but inning 5 for scheduled 7 inning games, for example. If an inning number is specified, seeking to an earlier point will not be possible. Default is the beginning of the stream.</span></span>: '
+    body += '<span class="tooltip">Inning<span class="tooltiptext">For video streams only: choose the inning to start with (and the score to display, if applicable). Inning number is relative -- for example, selecting inning 7 here will show inning 7 for scheduled 9 inning games, but inning 5 for scheduled 7 inning games, for example. If an inning number is specified, seeking to an earlier point will not be possible. Default is the beginning of the stream. Also does not work for suspended/resumed games.</span></span>: '
     body += '<select id="inning_half" onchange="inning_half=this.value;reload()">'
     for (var i = 0; i < VALID_INNING_HALF.length; i++) {
       body += '<option value="' + VALID_INNING_HALF[i] + '"'
@@ -955,6 +1021,20 @@ app.get('/', async function(req, res) {
       if ( scheduledInnings != '9' ) {
         state += "<br/>" + cache_data.dates[0].games[j].linescore.scheduledInnings + " inning game"
       }
+      var resumeStatus = false
+      if ( cache_data.dates[0].games[j].resumeGameDate || cache_data.dates[0].games[j].resumedFromDate ) {
+        resumeStatus = true
+        state += '<br/>Resum'
+        let resumeDate
+        if ( cache_data.dates[0].games[j].resumeGameDate ) {
+          resumeDate = new Date(cache_data.dates[0].games[j].resumeDate)
+          state += 'ing on'
+        } else {
+          resumeDate = new Date(cache_data.dates[0].games[j].resumedFrom)
+          state += 'ed from'
+        }
+        state += ' ' + resumeDate.toLocaleString('default', { month: 'long', day: 'numeric' })
+      }
 
       if ( (cache_data.dates[0].games[j].teams['away'].probablePitcher && cache_data.dates[0].games[j].teams['away'].probablePitcher.fullName) || (cache_data.dates[0].games[j].teams['home'].probablePitcher && cache_data.dates[0].games[j].teams['home'].probablePitcher.fullName) ) {
         pitchers = "<br/>"
@@ -1002,10 +1082,12 @@ app.get('/', async function(req, res) {
                   if ( startFrom != VALID_START_FROM[0] ) querystring += '&startFrom=' + startFrom
                   if ( controls != VALID_CONTROLS[0] ) querystring += '&controls=' + controls
                 }
-                if ( inning_half != VALID_INNING_HALF[0] ) querystring += '&inning_half=' + inning_half
-                if ( inning_number != VALID_INNING_NUMBER[0] ) querystring += '&inning_number=' + relative_inning
-                if ( skip != VALID_SKIP[0] ) querystring += '&skip=' + skip
-                if ( skip_adjust != DEFAULT_SKIP_ADJUST ) querystring += '&skip_adjust=' + skip_adjust
+                if ( resumeStatus == false ) {
+                  if ( inning_half != VALID_INNING_HALF[0] ) querystring += '&inning_half=' + inning_half
+                  if ( inning_number != VALID_INNING_NUMBER[0] ) querystring += '&inning_number=' + relative_inning
+                  if ( skip != VALID_SKIP[0] ) querystring += '&skip=' + skip
+                  if ( skip_adjust != DEFAULT_SKIP_ADJUST ) querystring += '&skip_adjust=' + skip_adjust
+                }
                 if ( pad != VALID_PAD[0] ) querystring += '&pad=' + pad
                 if ( linkType == VALID_LINK_TYPES[1] ) {
                   if ( cache_data.dates[0].games[j].content.media.epg[k].items[x].mediaState == 'MEDIA_ON' ) {
@@ -1040,7 +1122,7 @@ app.get('/', async function(req, res) {
     }
     body += '</p>' + "\n"
 
-    body += '<p><span class="tooltip">Skip<span class="tooltiptext">For video streams only (use the video "none" option above to apply it to audio streams): you can remove breaks, idle time, or non-action pitches from the stream (useful to make your own "condensed games").<br/><br/>NOTE: skip timings are only generated when the stream is loaded -- so for live games, it will only skip up to the time you loaded the stream.</span></span>: '
+    body += '<p><span class="tooltip">Skip<span class="tooltiptext">For video streams only (use the video "none" option above to apply it to audio streams): you can remove breaks, idle time, or non-action pitches from the stream (useful to make your own "condensed games").<br/><br/>NOTE: skip timings are only generated when the stream is loaded -- so for live games, it will only skip up to the time you loaded the stream. Also does not work for suspended/resumed games.</span></span>: '
     for (var i = 0; i < VALID_SKIP.length; i++) {
       body += '<button '
       if ( skip == VALID_SKIP[i] ) body += 'class="default" '

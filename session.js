@@ -498,7 +498,7 @@ class sessionClass {
   // API call
   async retrieveOktaAccessToken() {
     this.debuglog('retrieveOktaAccessToken')
-    if ( !this.data.oktaAccessToken || !this.data.oktaAccessTokenExpiry || (this.data.oktaAccessTokenExpiry < new Date()) ) {
+    if ( !this.data.oktaAccessToken || !this.data.oktaAccessTokenExpiry || (Date.parse(this.data.oktaAccessTokenExpiry) < new Date()) ) {
       this.debuglog('need to get oktaAccessToken')
       let state = this.getRandomString(64)
       let nonce = this.getRandomString(64)

@@ -35,7 +35,7 @@ const LEVELS = { 'AAA': '11', 'AA': '12', 'A+': '13', 'A': '14', 'All': '11,12,1
 // These are the events to ignore, if we're skipping breaks
 const BREAK_TYPES = ['Game Advisory', 'Pitching Substitution', 'Offensive Substitution', 'Defensive Sub', 'Defensive Switch', 'Runner Placed On Base']
 // These are the events to keep, in addition to the last event of each at-bat, if we're skipping pitches
-const ACTION_TYPES = ['Wild Pitch', 'Passed Ball', 'Stolen Base', 'Caught Stealing', 'Pickoff', 'Error', 'Out', 'Balk', 'Defensive Indiff']
+const ACTION_TYPES = ['Wild Pitch', 'Passed Ball', 'Stolen Base', 'Caught Stealing', 'Pickoff', 'Error', 'Out', 'Balk', 'Defensive Indiff', 'Other Advance']
 const EVENT_START_PADDING = 4
 const EVENT_END_PADDING = 17
 const MINIMUM_BREAK_DURATION = 10
@@ -76,13 +76,13 @@ class sessionClass {
       // Check if content_protect key was provided and if it is different from the stored one
       if ( argv.content_protect && (argv.content_protect != this.protection.content_protect) ) {
         this.log('using specified content protection key')
-        this.log('you may need to update any content URLs you have copied outside of mlbserver')
+        this.log('you may need to update any content URLs you have copied outside of milbserver')
         this.protection.content_protect = argv.content_protect
       } else {
         // Generate a content_protect key if it doesn't exist
         if ( !this.protection.content_protect ) {
           this.log('generating new content protection key')
-          this.log('** YOU WILL NEED TO UPDATE ANY CONTENT URLS YOU HAVE COPIED OUTSIDE OF MLBSERVER **')
+          this.log('** YOU WILL NEED TO UPDATE ANY CONTENT URLS YOU HAVE COPIED OUTSIDE OF MILBSERVER **')
           this.protection.content_protect = this.getRandomString(this.getRandomInteger(32,64))
           this.save_protection()
         }
@@ -295,6 +295,15 @@ class sessionClass {
 
   debuglog(msg) {
     if (this.debug) this.log(msg)
+  }
+
+  requestlog(type, req, debug=false) {
+    if ( req.url ) {
+      let msg = type + ' request : ' + req.url
+      if ( req.connection && req.connection.remoteAddress ) msg += ' from: ' + req.connection.remoteAddress
+      if ( req.headers && req.headers['user-agent'] ) msg += ' using: ' + req.headers['user-agent']
+      if (!debug || this.debug) this.log(msg)
+    }
   }
 
   halt(msg) {
@@ -789,77 +798,10 @@ class sessionClass {
     }
   }
 
-  // get live channels in M3U format
-  async getChannels(includeTeams, includeOrgs, server, resolution, pipe, startingChannelNumber) {
+  // get TV data (channels or guide)
+  async getTVData(dataType, includeTeams, includeOrgs, server, resolution='best', pipe='false', startingChannelNumber=1) {
     try {
-      this.debuglog('getChannels')
-
-      let mediaType = 'MiLBTV'
-
-      let cache_data = await this.getWeeksData()
-      if (cache_data) {
-        var channels = {}
-        for (var i = 0; i < cache_data.dates.length; i++) {
-          for (var j = 0; j < cache_data.dates[i].games.length; j++) {
-            // Begin MiLB games
-            let broadcast = false
-            if ( typeof cache_data.dates[i].games[j].broadcasts !== 'undefined' ) {
-              for (var k = 0; k < cache_data.dates[i].games[j].broadcasts.length; k++) {
-                if ( cache_data.dates[i].games[j].broadcasts[k].name == 'MiLB.TV' ) {
-                  broadcast = true
-                  break
-                }
-              }
-            }
-            if ( broadcast == true ) {
-              let home_team_id = cache_data.dates[i].games[j].teams['home'].team.id
-              let away_team_id = cache_data.dates[i].games[j].teams['away'].team.id
-              let home_parent = this.getParent(cache_data.dates[i].games[j].teams['home'].team.parentOrgName)
-              let away_parent = this.getParent(cache_data.dates[i].games[j].teams['away'].team.parentOrgName)
-              if ( ((includeTeams.length == 0) && (includeOrgs.length == 0)) || includeTeams.includes(home_team_id) || includeTeams.includes(away_team_id) || includeOrgs.includes(home_parent) || includeOrgs.includes(away_parent) ) {
-                let team_id = home_team_id
-                if ( includeTeams.includes(away_team_id) || includeOrgs.includes(away_parent) ) {
-                  team_id = away_team_id
-                }
-                let icon = server + '/image.svg?teamId=' + team_id
-                if ( this.protection.content_protect ) icon += '&content_protect=' + this.protection.content_protect
-                let channelid = mediaType + '.' + team_id
-                let stream = server + '/stream.m3u8?teamId=' + encodeURIComponent(team_id)
-                stream += '&resolution=' + resolution
-                if ( this.protection.content_protect ) stream += '&content_protect=' + this.protection.content_protect
-                if ( pipe == 'true' ) {
-                  stream = 'pipe://ffmpeg -hide_banner -loglevel fatal -i "' + stream + '" -map 0:v -map 0:a -c copy -metadata service_provider="' + mediaType + '" -metadata service_name="' + channelid + '" -f mpegts pipe:1'
-                }
-                channels[channelid] = {}
-                channels[channelid].channellogo = icon
-                channels[channelid].stream = stream
-                channels[channelid].mediatype = mediaType
-              }
-            }
-          }
-        }
-        channels = this.sortObj(channels)
-
-        let channelnumber = startingChannelNumber
-        var body = '#EXTM3U' + "\n"
-        //body += '#EXTINF:-1 CUID="MILBSERVER.SAMPLE.VIDEO" tvg-id="MILBSERVER.SAMPLE.VIDEO" tvg-name="MILBSERVER.SAMPLE.VIDEO",MILBSERVER SAMPLE VIDEO' + "\n"
-        //body += '/stream.m3u8' + "\n"
-        for (const [key, value] of Object.entries(channels)) {
-          body += '#EXTINF:-1 CUID="' + key + '" channelID="' + key + '" tvg-num="1.' + channelnumber + '" tvg-chno="1.' + channelnumber + '" tvg-id="' + key + '" tvg-name="' + key + '" tvg-logo="' + value.channellogo + '" group-title="' + value.mediatype + '",' + key + "\n"
-          body += value.stream + "\n"
-          channelnumber++
-        }
-        return body
-      }
-    } catch(e) {
-      this.log('getChannels error : ' + e.message)
-    }
-  }
-
-  // get guide.xml file, in XMLTV format
-  async getGuide(includeTeams, includeOrgs, server) {
-    try {
-      this.debuglog('getGuide')
+      this.debuglog('getTVData')
 
       let mediaType = 'MiLBTV'
 
@@ -880,24 +822,35 @@ class sessionClass {
               }
             }
             if ( broadcast == true ) {
-              let home_team_id = cache_data.dates[i].games[j].teams['home'].team.id
-              let away_team_id = cache_data.dates[i].games[j].teams['away'].team.id
+              let home_team_id = cache_data.dates[i].games[j].teams['home'].team.id.toString()
+              let away_team_id = cache_data.dates[i].games[j].teams['away'].team.id.toString()
               let home_parent = this.getParent(cache_data.dates[i].games[j].teams['home'].team.parentOrgName)
               let away_parent = this.getParent(cache_data.dates[i].games[j].teams['away'].team.parentOrgName)
               if ( ((includeTeams.length == 0) && (includeOrgs.length == 0)) || includeTeams.includes(home_team_id) || includeTeams.includes(away_team_id) || includeOrgs.includes(home_parent) || includeOrgs.includes(away_parent) ) {
-                let team_id = home_team_id
-                if ( includeTeams.includes(away_team_id) || includeOrgs.includes(away_parent) ) {
-                  team_id = away_team_id
-                }
-                let icon = server + '/image.svg?teamId=' + team_id
-                if ( this.protection.content_protect ) icon += '&content_protect=' + this.protection.content_protect
-                let channelid = mediaType + '.' + team_id
-                channels[channelid] = {}
-                channels[channelid].name = channelid
-                channels[channelid].icon = icon
-
                 let awayteam = cache_data.dates[i].games[j].teams['away'].team.shortName + ' (' + away_parent + ')'
                 let hometeam = cache_data.dates[i].games[j].teams['home'].team.shortName + ' (' + home_parent + ')'
+
+                let team_id = home_team_id
+                let channel_name = cache_data.dates[i].games[j].teams['home'].team.shortName + ' ' + home_parent
+                if ( includeTeams.includes(away_team_id) || includeOrgs.includes(away_parent) ) {
+                  team_id = away_team_id
+                  channel_name = cache_data.dates[i].games[j].teams['away'].team.shortName + ' ' + away_parent
+                }
+                channel_name = channel_name.replace(/ /g, '.')
+                let logo = server + '/image.svg?teamId=' + team_id
+                if ( this.protection.content_protect ) logo += '&content_protect=' + this.protection.content_protect
+                let channelid = mediaType + '.' + channel_name
+                let stream = server + '/stream.m3u8?teamId=' + encodeURIComponent(team_id)
+                stream += '&resolution=' + resolution
+                if ( this.protection.content_protect ) stream += '&content_protect=' + this.protection.content_protect
+                if ( pipe == 'true' ) {
+                  stream = 'pipe://ffmpeg -hide_banner -loglevel fatal -i "' + stream + '" -map 0:v -map 0:a -c copy -metadata service_provider="' + mediaType + '" -metadata service_name="' + channelid + '" -f mpegts pipe:1'
+                }
+                channels[channelid] = {}
+                channels[channelid].name = channelid
+                channels[channelid].logo = logo
+                channels[channelid].stream = stream
+                channels[channelid].mediatype = mediaType
 
                 let title = 'MiLB Baseball: ' + awayteam + ' at ' + hometeam
 
@@ -947,28 +900,45 @@ class sessionClass {
                 '      <title lang="en">' + title + '</title>' + "\n" +
                 '      <desc lang="en">' + description.trim() + '</desc>' + "\n" +
                 '      <category lang="en">Sports</category>' + "\n" +
-                '      <icon src="' + icon + '"></icon>' + "\n" +
+                '      <icon src="' + logo + '"></icon>' + "\n" +
                 '    </programme>'
               }
             }
           }
         }
+        channels = this.sortObj(channels)
 
-        var body = '<?xml version="1.0" encoding="UTF-8"?>' + "\n" +
-        '<!DOCTYPE tv SYSTEM "xmltv.dd">' + "\n" +
-        '  <tv generator-info-name="mlbserver" source-info-name="mlbserver">'
-        for (const [key, value] of Object.entries(channels)) {
-          body += "\n" + '    <channel id="' + key + '">' + "\n" +
-          '      <display-name>' + value.name + '</display-name>' + "\n" +
-          '      <icon src="' + value.icon + '"></icon>' + "\n" +
-          '    </channel>'
+        var body = ''
+
+        // output M3U channel data, if requested
+        if ( dataType == 'channels' ) {
+          let channelnumber = startingChannelNumber
+          body = '#EXTM3U' + "\n"
+          //body += '#EXTINF:-1 CUID="MILBSERVER.SAMPLE.VIDEO" tvg-id="MILBSERVER.SAMPLE.VIDEO" tvg-name="MILBSERVER.SAMPLE.VIDEO",MILBSERVER SAMPLE VIDEO' + "\n"
+          //body += '/stream.m3u8' + "\n"
+          for (const [key, value] of Object.entries(channels)) {
+            body += '#EXTINF:-1 CUID="' + key + '" channelID="' + key + '" tvg-num="1.' + channelnumber + '" tvg-chno="1.' + channelnumber + '" tvg-id="' + key + '" tvg-name="' + key + '" tvg-logo="' + value.logo + '" group-title="' + value.mediatype + '",' + key + "\n"
+            body += value.stream + "\n"
+            channelnumber++
+          }
+        // otherwise output XML guide data
+        } else {
+          body = '<?xml version="1.0" encoding="UTF-8"?>' + "\n" +
+            '<!DOCTYPE tv SYSTEM "xmltv.dd">' + "\n" +
+            '  <tv generator-info-name="milbserver" source-info-name="milbserver">'
+          for (const [key, value] of Object.entries(channels)) {
+            body += "\n" + '    <channel id="' + key + '">' + "\n" +
+            '      <display-name>' + value.name + '</display-name>' + "\n" +
+            '      <icon src="' + value.logo + '"></icon>' + "\n" +
+            '    </channel>'
+          }
+          body += programs + "\n" + '  </tv>'
         }
-        body += programs + "\n" + '  </tv>'
 
         return body
       }
     } catch(e) {
-      this.log('getGuide error : ' + e.message)
+      this.log('getTVData error : ' + e.message)
     }
   }
 

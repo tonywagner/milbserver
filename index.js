@@ -103,8 +103,10 @@ app.listen(port, function(addr) {
 
 // Listen for stream requests
 app.get('/stream.m3u8', async function(req, res) {
+  if ( ! (await protect(req, res)) ) return
+
   try {
-    session.log('stream.m3u8 request : ' + req.url)
+    session.requestlog('stream.m3u8', req)
 
     let gamePk
     let streamURL
@@ -416,8 +418,10 @@ function getMasterPlaylist(streamURL, req, res, options = {}) {
 }
 
 // Listen for playlist requests
-app.get('/playlist', function(req, res) {
-  session.debuglog('playlist request : ' + req.url)
+app.get('/playlist', async function(req, res) {
+  if ( ! (await protect(req, res)) ) return
+
+  session.requestlog('playlist', req, true)
 
   delete req.headers.host
 
@@ -588,7 +592,7 @@ app.get('/playlist', function(req, res) {
 app.get('/ts', async function(req, res) {
   if ( ! (await protect(req, res)) ) return
 
-  session.debuglog('ts request : ' + req.url)
+  session.requestlog('ts', req, true)
 
   delete req.headers.host
 
@@ -637,8 +641,10 @@ app.get('/ts', async function(req, res) {
 })
 
 // Listen for vtt (subtitle) requests
-app.get('/vtt', function(req, res) {
-  session.debuglog('vtt request : ' + req.url)
+app.get('/vtt', async function(req, res) {
+  if ( ! (await protect(req, res)) ) return
+
+  session.requestlog('vtt', req, true)
 
   delete req.headers.host
 
@@ -711,21 +717,23 @@ app.get('/', async function(req, res) {
   try {
     if ( ! (await protect(req, res)) ) return
 
-    session.debuglog('homepage request : ' + req.url)
+    session.requestlog('homepage', req)
 
     let gameDate = session.liveDate()
+    let today = gameDate
+    let yesterday = session.yesterdayDate()
     let todayUTCHours = session.getTodayUTCHours()
     let curDate = new Date()
     if ( req.query.date ) {
       if ( req.query.date == VALID_DATES[1] ) {
-        gameDate = session.yesterdayDate()
+        gameDate = yesterday
       } else if ( req.query.date != VALID_DATES[0] ) {
         gameDate = req.query.date
       }
     } else {
       let utcHours = curDate.getUTCHours()
       if ( (utcHours >= todayUTCHours) && (utcHours < YESTERDAY_UTC_HOURS) ) {
-        gameDate = session.yesterdayDate()
+        gameDate = yesterday
       }
     }
 
@@ -828,7 +836,7 @@ app.get('/', async function(req, res) {
     body += 'var date="' + gameDate + '";var level="' + level + '";var org="' + org + '";var resolution="' + resolution + '";var force_vod="' + force_vod + '";var inning_half="' + inning_half + '";var inning_number="' + inning_number + '";var skip="' + skip + '";var skip_adjust="' + skip_adjust + '";var pad="' + pad + '";var linkType="' + linkType + '";var startFrom="' + startFrom + '";var scores="' + scores + '";var controls="' + controls + '";var scan_mode="' + scan_mode + '";var content_protect="' + content_protect + '";' + "\n"
 
     // Reload function, called after options change
-    body += 'var defaultDate="' + session.liveDate() + '";var curDate=new Date();var utcHours=curDate.getUTCHours();if ((utcHours >= ' + todayUTCHours + ') && (utcHours < ' + YESTERDAY_UTC_HOURS + ')){defaultDate="' + session.yesterdayDate() + '"}function reload(){var newurl="/?";if (date != defaultDate){var urldate=date;if (date == "' + session.liveDate() + '"){urldate="today"}else if (date == "' + session.yesterdayDate() + '"){urldate="yesterday"}newurl+="date="+urldate+"&"}if (level != "' + default_level + '"){newurl+="level="+encodeURIComponent(level)+"&"}if (org != "All"){newurl+="org="+encodeURIComponent(org)+"&"}if (resolution != "' + VALID_RESOLUTIONS[0] + '"){newurl+="resolution="+resolution+"&"}if (linkType=="' + VALID_LINK_TYPES[1] + '"){if (force_vod != "' + VALID_FORCE_VOD[0] + '"){newurl+="force_vod="+force_vod+"&"}}if (inning_half != "' + VALID_INNING_HALF[0] + '"){newurl+="inning_half="+inning_half+"&"}if (inning_number != "' + VALID_INNING_NUMBER[0] + '"){newurl+="inning_number="+inning_number+"&"}if (skip != "' + VALID_SKIP[0] + '"){newurl+="skip="+skip+"&";if (skip_adjust != "' + DEFAULT_SKIP_ADJUST + '"){newurl+="skip_adjust="+skip_adjust+"&"}}if (pad != "' + VALID_PAD[0] + '"){newurl+="pad="+pad+"&";}if (linkType != "' + VALID_LINK_TYPES[0] + '"){newurl+="linkType="+linkType+"&"}if (linkType=="' + VALID_LINK_TYPES[0] + '"){if (controls != "' + VALID_CONTROLS[0] + '"){newurl+="controls="+controls+"&"}if (startFrom != "' + VALID_START_FROM[0] + '"){newurl+="startFrom="+startFrom+"&"}}if (scores != "' + VALID_SCORES[0] + '"){newurl+="scores="+scores+"&"}if (scan_mode != "' + session.data.scan_mode + '"){newurl+="scan_mode="+scan_mode+"&"}if (content_protect != ""){newurl+="content_protect="+content_protect+"&"}window.location=newurl.substring(0,newurl.length-1)}' + "\n"
+    body += 'var defaultDate="' + today + '";var curDate=new Date();var utcHours=curDate.getUTCHours();if ((utcHours >= ' + todayUTCHours + ') && (utcHours < ' + YESTERDAY_UTC_HOURS + ')){defaultDate="' + yesterday + '"}function reload(){var newurl="/?";if (date != defaultDate){var urldate=date;if (date == "' + today + '"){urldate="today"}else if (date == "' + yesterday + '"){urldate="yesterday"}newurl+="date="+urldate+"&"}if (level != "' + default_level + '"){newurl+="level="+encodeURIComponent(level)+"&"}if (org != "All"){newurl+="org="+encodeURIComponent(org)+"&"}if (resolution != "' + VALID_RESOLUTIONS[0] + '"){newurl+="resolution="+resolution+"&"}if (linkType=="' + VALID_LINK_TYPES[1] + '"){if (force_vod != "' + VALID_FORCE_VOD[0] + '"){newurl+="force_vod="+force_vod+"&"}}if (inning_half != "' + VALID_INNING_HALF[0] + '"){newurl+="inning_half="+inning_half+"&"}if (inning_number != "' + VALID_INNING_NUMBER[0] + '"){newurl+="inning_number="+inning_number+"&"}if (skip != "' + VALID_SKIP[0] + '"){newurl+="skip="+skip+"&";if (skip_adjust != "' + DEFAULT_SKIP_ADJUST + '"){newurl+="skip_adjust="+skip_adjust+"&"}}if (pad != "' + VALID_PAD[0] + '"){newurl+="pad="+pad+"&";}if (linkType != "' + VALID_LINK_TYPES[0] + '"){newurl+="linkType="+linkType+"&"}if (linkType=="' + VALID_LINK_TYPES[0] + '"){if (controls != "' + VALID_CONTROLS[0] + '"){newurl+="controls="+controls+"&"}if (startFrom != "' + VALID_START_FROM[0] + '"){newurl+="startFrom="+startFrom+"&"}}if (scores != "' + VALID_SCORES[0] + '"){newurl+="scores="+scores+"&"}if (scan_mode != "' + session.data.scan_mode + '"){newurl+="scan_mode="+scan_mode+"&"}if (content_protect != ""){newurl+="content_protect="+content_protect+"&"}window.location=newurl.substring(0,newurl.length-1)}' + "\n"
 
     // Adds touch capability to hover tooltips
     body += 'document.addEventListener("touchstart", function() {}, true);' + "\n"
@@ -841,7 +849,7 @@ app.get('/', async function(req, res) {
     body += '<p><span class="tooltip">Date<span class="tooltiptext">"today" lasts until ' + todayUTCHours + ' AM EST. Home page will default to yesterday between ' + todayUTCHours + ' AM - ' + (YESTERDAY_UTC_HOURS - 4) + ' AM EST.</span></span>: <input type="date" id="gameDate" value="' + gameDate + '"/> '
     for (var i = 0; i < VALID_DATES.length; i++) {
       body += '<button '
-      if ( ((VALID_DATES[i] == VALID_DATES[0]) && (gameDate == session.liveDate())) || ((VALID_DATES[i] == VALID_DATES[1]) && (gameDate == session.yesterdayDate())) ) body += 'class="default" '
+      if ( ((VALID_DATES[i] == VALID_DATES[0]) && (gameDate == today)) || ((VALID_DATES[i] == VALID_DATES[1]) && (gameDate == yesterday)) ) body += 'class="default" '
       body += 'onclick="date=\'' + VALID_DATES[i] + '\';reload()">' + VALID_DATES[i] + '</button> '
     }
     let cache_label = gameDate + '.' + level_ids
@@ -1139,7 +1147,7 @@ app.get('/', async function(req, res) {
     }
     body += '</p>' + "\n"
 
-    if ( (linkType == VALID_LINK_TYPES[1]) && (gameDate == session.liveDate()) ) {
+    if ( (linkType == VALID_LINK_TYPES[1]) && (gameDate == today) ) {
       body += '<p><span class="tooltip">Force VOD<span class="tooltiptext">For streams only: if your client does not support seeking in milbserver live streams, turning this on will make the stream look like a VOD stream instead, allowing the client to start at the beginning and allowing the user to seek within it. You will need to reload the stream to watch/view past the current time, though.</span></span>: '
       for (var i = 0; i < VALID_FORCE_VOD.length; i++) {
         body += '<button '
@@ -1161,11 +1169,15 @@ app.get('/', async function(req, res) {
     }
     body += ' <span class="tinytext">(ON plays sample for all stream requests)</span></p>' + "\n"
 
+    if ( !req.query.resolution ) {
+      resolution = 'best'
+    }
+
     body += '<p>All: <a href="/channels.m3u?resolution=' + resolution + content_protect_b + '">channels.m3u</a> and <a href="/guide.xml' + content_protect_a + '">guide.xml</a></p>' + "\n"
 
     body += '<p><span class="tooltip">By org<span class="tooltiptext">Including an organization will include all of its affiliates\' games. Organization names are listed in the drop-down menu near the top of this page.</span></span>: <a href="/channels.m3u?resolution=' + resolution + '&includeOrgs=Angels,Blue Jays' + content_protect_b + '">channels.m3u</a> and <a href="/guide.xml?includeOrgs=Angels,Blue Jays' + content_protect_b + '">guide.xml</a></p>' + "\n"
 
-    body += '<p><span class="tooltip">By team<span class="tooltiptext">Including a team id will include that team\'s games. Click or tap on a team name in the schedule table above to see its id number.</span></span>: <a href="/channels.m3u?resolution=' + resolution + '&includeTeams=488,561' + content_protect_b + '">channels.m3u</a> and <a href="/guide.xml?includeTeams=488,561' + content_protect_b + '">guide.xml</a></p>' + "\n"
+    body += '<p><span class="tooltip">By team<span class="tooltiptext">Including a team id will include that team\'s games. Click or tap on a team name in the schedule table above to see its id number.</span></span>: <a href="/channels.m3u?resolution=' + resolution + '&includeTeams=342,422' + content_protect_b + '">channels.m3u</a> and <a href="/guide.xml?includeTeams=342,422' + content_protect_b + '">guide.xml</a></p>' + "\n"
 
     body += '</td></tr></table><br/>' + "\n"
 
@@ -1221,7 +1233,7 @@ app.get('/', async function(req, res) {
 
 // Listen for OPTIONS requests and respond with CORS headers
 app.options('*', function(req, res) {
-  session.debuglog('OPTIONS request : ' + req.url)
+  session.requestlog('options', req, true)
   var cors_headers = {
     'access-control-allow-headers': 'Origin, X-Requested-With, Content-Type, accessToken, Authorization, Accept, Range',
     'access-control-allow-origin': '*',
@@ -1237,7 +1249,7 @@ app.options('*', function(req, res) {
 app.get('/live-stream-games*', async function(req, res) {
   if ( ! (await protect(req, res)) ) return
 
-  session.debuglog('schedule request : ' + req.url)
+  session.requestlog('live-stream-games', req)
 
   // check for a linkType parameter in the url
   let linkType = VALID_LINK_TYPES[0]
@@ -1292,7 +1304,7 @@ app.get('/live-stream-games*', async function(req, res) {
 app.get('/embed.html', async function(req, res) {
   if ( ! (await protect(req, res)) ) return
 
-  session.log('embed.html request : ' + req.url)
+  session.requestlog('embed.html', req)
 
   let video_url = '/stream.m3u8'
   let urlArray = req.url.split('?')
@@ -1320,17 +1332,17 @@ app.get('/embed.html', async function(req, res) {
   if ( controls == VALID_CONTROLS[0] ) {
     body += ' controls'
   }
-  body += '></video><script>var video=document.getElementById("video");if(Hls.isSupported()){var hls=new Hls('
+  body += '></video><script>var video=document.getElementById("video");var track;if(Hls.isSupported()){var hls=new Hls('
 
   if ( startFrom != VALID_START_FROM[1] ) {
     body += '{startPosition:0,liveSyncDuration:32400,liveMaxLatencyDuration:32410}'
   }
 
-  body += ');hls.loadSource("' + video_url + '");hls.attachMedia(video);hls.on(Hls.Events.MEDIA_ATTACHED,function(){video.muted=true;video.play()});hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, function(){var audioSpan=document.getElementById("audioSpan");var audioButtons="";for(var i=0;i<hls.audioTracks.length;i++){audioButtons+=\'<button id="audioButton\'+i+\'" class="audioButton\';if(i==0){audioButtons+=\' default\'}audioButtons+=\'" onclick="toggleAudio(\'+i+\')">\'+hls.audioTracks[i]["name"]+"</button> "}audioSpan.innerHTML=audioButtons})}else if(video.canPlayType("application/vnd.apple.mpegurl")){video.src="' + video_url + '";video.addEventListener("canplay",function(){video.play()})}</script><p>Skip: <button onclick="changeTime(-10)">- 10 s</button> <button onclick="changeTime(10)">+ 10 s</button> <button onclick="changeTime(30)">+ 30 s</button> <button onclick="changeTime(90)">+ 90 s</button> '
+  body += ');hls.loadSource("' + video_url + '");hls.attachMedia(video);hls.on(Hls.Events.MEDIA_ATTACHED,function(){video.muted=true;video.play()});hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, function(){var audioSpan=document.getElementById("audioSpan");var audioButtons="";for(var i=0;i<hls.audioTracks.length;i++){audioButtons+=\'<button id="audioButton\'+i+\'" class="audioButton\';if(i==0){audioButtons+=\' default\'}audioButtons+=\'" onclick="toggleAudio(\'+i+\')">\'+hls.audioTracks[i]["name"]+"</button> "}audioSpan.innerHTML=audioButtons});hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, function(){track=video.textTracks && video.textTracks[0]})}else if(video.canPlayType("application/vnd.apple.mpegurl")){video.src="' + video_url + '";video.addEventListener("canplay",function(){video.play()})}</script><p>Skip: <button onclick="changeTime(-10)">- 10 s</button> <button onclick="changeTime(10)">+ 10 s</button> <button onclick="changeTime(30)">+ 30 s</button> <button onclick="changeTime(90)">+ 90 s</button> '
 
   body += '<button onclick="changeTime(video.duration-10)">Latest</button> '
 
-  body += '<button id="airplay">AirPlay</button></p><p>Playback rate: <input type="number" value=1.0 min=0.1 max=16.0 step=0.1 id="playback_rate" size="8" style="width: 4em" onchange="video.defaultPlaybackRate=video.playbackRate=this.value"></p><p>Audio: <button onclick="video.muted=!video.muted">Toggle Mute</button> <span id="audioSpan"></span></p><p>Controls: <button onclick="video.controls=!video.controls">Toggle Controls</button></p><p><button onclick="goBack()">Back</button></p><script>var airPlay=document.getElementById("airplay");if(window.WebKitPlaybackTargetAvailabilityEvent){video.addEventListener("webkitplaybacktargetavailabilitychanged",function(event){switch(event.availability){case "available":airPlay.style.display="inline";break;default:airPlay.style.display="none"}airPlay.addEventListener("click",function(){video.webkitShowPlaybackTargetPicker()})})}else{airPlay.style.display="none"}</script></body></html>'
+  body += '<button id="airplay">AirPlay</button></p><p>Playback rate: <input type="number" value=1.0 min=0.1 max=16.0 step=0.1 id="playback_rate" size="8" style="width: 4em" onchange="video.defaultPlaybackRate=video.playbackRate=this.value"></p><p>Audio: <button onclick="video.muted=!video.muted">Toggle Mute</button> <span id="audioSpan"></span></p><p>Captions: <button onclick="if(track){if(track.mode.indexOf(\'showing\') >= 0){track.mode = \'hidden\'}else{track.mode=\'showing\'}}">Toggle Captions</button> <span id="audioSpan"></span></p><p>Controls: <button onclick="video.controls=!video.controls">Toggle Controls</button></p><p><button onclick="goBack()">Back</button></p><script>var airPlay=document.getElementById("airplay");if(window.WebKitPlaybackTargetAvailabilityEvent){video.addEventListener("webkitplaybacktargetavailabilitychanged",function(event){switch(event.availability){case "available":airPlay.style.display="inline";break;default:airPlay.style.display="none"}airPlay.addEventListener("click",function(){video.webkitShowPlaybackTargetPicker()})})}else{airPlay.style.display="none"}</script></body></html>'
   res.end(body)
 })
 
@@ -1338,7 +1350,7 @@ app.get('/embed.html', async function(req, res) {
 app.get('/advanced.html', async function(req, res) {
   if ( ! (await protect(req, res)) ) return
 
-  session.log('advanced embed request : ' + req.url)
+  session.requestlog('advanced.html', req)
 
   let server = 'http://' + req.headers.host
 
@@ -1361,7 +1373,7 @@ app.get('/advanced.html', async function(req, res) {
 app.get('/chromecast.html', async function(req, res) {
   if ( ! (await protect(req, res)) ) return
 
-  session.log('chromecast request : ' + req.url)
+  session.requestlog('chromecast.html', req)
 
   let server = 'http://' + req.headers.host
 
@@ -1384,7 +1396,7 @@ app.get('/chromecast.html', async function(req, res) {
 app.get('/channels.m3u', async function(req, res) {
   if ( ! (await protect(req, res)) ) return
 
-  session.log('channels.m3u request : ' + req.url)
+  session.requestlog('channels.m3u', req)
 
   let includeTeams = []
   if ( req.query.includeTeams ) {
@@ -1413,7 +1425,7 @@ app.get('/channels.m3u', async function(req, res) {
     startingChannelNumber = req.query.startingChannelNumber
   }
 
-  var body = await session.getChannels(includeTeams, includeOrgs, server, resolution, pipe, startingChannelNumber)
+  var body = await session.getTVData('channels', includeTeams, includeOrgs, server, resolution, pipe, startingChannelNumber)
 
   res.writeHead(200, {'Content-Type': 'audio/x-mpegurl'})
   res.end(body)
@@ -1423,7 +1435,7 @@ app.get('/channels.m3u', async function(req, res) {
 app.get('/guide.xml', async function(req, res) {
   if ( ! (await protect(req, res)) ) return
 
-  session.log('guide.xml request : ' + req.url)
+  session.requestlog('guide.xml', req)
 
   let includeTeams = []
   if ( req.query.includeTeams ) {
@@ -1437,7 +1449,7 @@ app.get('/guide.xml', async function(req, res) {
 
   let server = 'http://' + req.headers.host
 
-  var body = await session.getGuide(includeTeams, includeOrgs, server)
+  var body = await session.getTVData('guide', includeTeams, includeOrgs, server)
 
   res.end(body)
 })
@@ -1446,7 +1458,7 @@ app.get('/guide.xml', async function(req, res) {
 app.get('/image.svg', async function(req, res) {
   if ( ! (await protect(req, res)) ) return
 
-  session.debuglog('image request : ' + req.url)
+  session.requestlog('image.svg', req, true)
 
   let teamId = 'MILB'
   if ( req.query.teamId ) {
@@ -1463,7 +1475,7 @@ app.get('/image.svg', async function(req, res) {
 app.get('/favicon.svg', async function(req, res) {
   if ( ! (await protect(req, res)) ) return
 
-  session.debuglog('favicon request : ' + req.url)
+  session.requestlog('favicon.svg', req, true)
 
   var body = await session.getImage('MILB')
 

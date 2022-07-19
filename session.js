@@ -11,6 +11,7 @@ const FileCookieStore = require('tough-cookie-filestore')
 // Define some file paths and names
 const DATA_DIRECTORY = path.join(__dirname, 'data')
 const CACHE_DIRECTORY = path.join(__dirname, 'cache')
+const MULTIVIEW_DIRECTORY_NAME = 'multiview'
 
 const CREDENTIALS_FILE = path.join(__dirname, 'credentials.json')
 const PROTECTION_FILE = path.join(__dirname, 'protection.json')
@@ -89,9 +90,28 @@ class sessionClass {
       }
     }
 
-    // Create cookies json file if it doesn't exist
+    // Create storage directory if it doesn't already exist
     this.createDirectory(DATA_DIRECTORY)
+
+    // Set multiview path
+    if ( argv.multiview_path ) {
+      this.multiview_path = path.join(argv.multiview_path, path.basename(__dirname))
+      this.createDirectory(this.multiview_path)
+      this.multiview_path = path.join(this.multiview_path, MULTIVIEW_DIRECTORY_NAME)
+    } else {
+      this.multiview_path = path.join(__dirname, MULTIVIEW_DIRECTORY_NAME)
+    }
+    this.createDirectory(this.multiview_path)
+
+    // Create cookie storage file if it doesn't already exist
     this.createFile(COOKIE_FILE)
+    // Verify its contents are valid
+    let cookieStr = fs.readFileSync(COOKIE_FILE)
+    if ( (cookieStr != '') && !this.isValidJson(cookieStr) ) {
+      this.log('invalid cookie storage file contents, resetting')
+      fs.unlinkSync(COOKIE_FILE)
+      this.createFile(COOKIE_FILE)
+    }
 
     // Set up http requests with the cookie jar
     this.request = require('request-promise')
@@ -114,6 +134,13 @@ class sessionClass {
     }
   }
 
+  // Store the ports, used for generating URLs
+  setPorts(port, multiviewPort) {
+    this.data.port = port
+    this.data.multiviewPort = multiviewPort
+    this.save_session_data()
+  }
+
   // Set the scan_mode
   // "on" will return the sample stream for all live channels.m3u stream requests
   setScanMode(x) {
@@ -126,6 +153,12 @@ class sessionClass {
   // used for storing the desired page type across throughout site navigation
   setLinkType(x) {
     this.data.linkType = x
+    this.save_session_data()
+  }
+
+  // Set the multiview stream URL path
+  setMultiviewStreamURLPath(url_path) {
+    this.data.multiviewStreamURLPath = url_path
     this.save_session_data()
   }
 
@@ -336,6 +369,28 @@ class sessionClass {
     }
   }
 
+  get_multiview_directory() {
+    return this.multiview_path
+  }
+
+  clear_multiview_files() {
+    try {
+      if ( this.multiview_path ) {
+        fs.readdir(this.multiview_path, (err, files) => {
+          if (err) throw err
+
+          for (const file of files) {
+            fs.unlink(path.join(this.multiview_path, file), err => {
+              if (err) throw err
+            })
+          }
+        })
+      }
+    } catch(e){
+      this.debuglog('clear multiview files error : ' + e.message)
+    }
+  }
+
   save_credentials() {
     this.writeJsonToFile(JSON.stringify(this.credentials), CREDENTIALS_FILE)
     this.debuglog('credentials saved to file')
@@ -424,9 +479,9 @@ class sessionClass {
     this.request(u, opts, cb)
     .catch(function(e) {
       let curDate = new Date()
-      console.error(curDate.toLocaleString() + ' stream video failed on url : ' + u)
-      console.error(curDate.toLocaleString() + ' stream video failed with error : ' + e.message.toString())
-      if ( tries == 1 ) process.exit(1)
+      console.log(curDate.toLocaleString() + ' stream video failed on url : ' + u)
+      console.log(curDate.toLocaleString() + ' stream video failed with error : ' + e.message.toString())
+      if ( tries == 0 ) process.exit(1)
     })
   }
 
@@ -799,7 +854,7 @@ class sessionClass {
   }
 
   // get TV data (channels or guide)
-  async getTVData(dataType, includeTeams, includeOrgs, server, resolution='best', pipe='false', startingChannelNumber=1) {
+  async getTVData(dataType, includeTeams, excludeTeams, includeOrgs, server, resolution='best', pipe='false', startingChannelNumber=1) {
     try {
       this.debuglog('getTVData')
 
@@ -826,13 +881,13 @@ class sessionClass {
               let away_team_id = cache_data.dates[i].games[j].teams['away'].team.id.toString()
               let home_parent = this.getParent(cache_data.dates[i].games[j].teams['home'].team.parentOrgName)
               let away_parent = this.getParent(cache_data.dates[i].games[j].teams['away'].team.parentOrgName)
-              if ( ((includeTeams.length == 0) && (includeOrgs.length == 0)) || includeTeams.includes(home_team_id) || includeTeams.includes(away_team_id) || includeOrgs.includes(home_parent) || includeOrgs.includes(away_parent) ) {
+              if ( ((includeTeams.length == 0) && (includeOrgs.length == 0)) || includeTeams.includes(home_team_id) || includeTeams.includes(away_team_id) || includeOrgs.includes(home_parent.toUpperCase()) || includeOrgs.includes(away_parent.toUpperCase()) ) {
                 let awayteam = cache_data.dates[i].games[j].teams['away'].team.shortName + ' (' + away_parent + ')'
                 let hometeam = cache_data.dates[i].games[j].teams['home'].team.shortName + ' (' + home_parent + ')'
 
                 let team_id = home_team_id
                 let channel_name = cache_data.dates[i].games[j].teams['home'].team.shortName + ' ' + home_parent
-                if ( includeTeams.includes(away_team_id) || includeOrgs.includes(away_parent) ) {
+                if ( includeTeams.includes(away_team_id) || includeOrgs.includes(away_parent.toUpperCase()) ) {
                   team_id = away_team_id
                   channel_name = cache_data.dates[i].games[j].teams['away'].team.shortName + ' ' + away_parent
                 }
@@ -907,6 +962,45 @@ class sessionClass {
           }
         }
         channels = this.sortObj(channels)
+
+        // Multiview
+        if ( typeof this.data.multiviewStreamURLPath !== 'undefined' ) {
+          if ( (excludeTeams.length > 0) && excludeTeams.includes('MULTIVIEW') ) {
+            // do nothing
+          } else if ( (includeTeams.length == 0) || includeTeams.includes('MULTIVIEW') ) {
+            let extraChannels = {}
+            let channelid = mediaType + '.MULTIVIEW'
+            let logo = server + '/image.svg?teamId=MILB'
+            if ( this.protection.content_protect ) logo += '&content_protect=' + this.protection.content_protect
+            let stream = server.replace(':' + this.data.port, ':' + this.data.multiviewPort) + this.data.multiviewStreamURLPath
+            if ( pipe == 'true' ) {
+              stream = 'pipe://ffmpeg -hide_banner -loglevel fatal -i "' + stream + '" -map 0:v -map 0:a -c copy -metadata service_provider="MLBTV" -metadata service_name="' + channelid + '" -f mpegts pipe:1'
+            }
+            extraChannels[channelid] = {}
+            extraChannels[channelid].name = channelid
+            extraChannels[channelid].logo = logo
+            extraChannels[channelid].stream = stream
+            extraChannels[channelid].mediatype = mediaType
+            channels = Object.assign(channels, extraChannels)
+
+            let title = 'MiLB.TV Multiview'
+            let description = 'Watch up to 4 games at once. Requires starting the multiview stream in the web interface first, and stopping it when done.'
+
+            for (var i = 0; i < cache_data.dates.length; i++) {
+              let gameDate = new Date(cache_data.dates[i].date + 'T00:00:00.000')
+              let start = this.convertDateToXMLTV(gameDate)
+              gameDate.setDate(gameDate.getDate()+1)
+              let stop = this.convertDateToXMLTV(gameDate)
+
+              programs += "\n" + '    <programme channel="' + channelid + '" start="' + start + '" stop="' + stop + '">' + "\n" +
+              '      <title lang="en">' + title + '</title>' + "\n" +
+              '      <desc lang="en">' + description.trim() + '</desc>' + "\n" +
+              '      <category lang="en">Sports</category>' + "\n" +
+              '      <icon src="' + logo + '"></icon>' + "\n" +
+              '    </programme>'
+            }
+          }
+        }
 
         var body = ''
 
